@@ -20,6 +20,18 @@ def extract_quiz_data(pdf_path, output_json_path):
         if not line:
             continue
             
+        # --- [노이즈 데이터 자동 필터링 로직] ---
+        # 1. 책 제목 및 헤더 무시
+        if line == "수상구조사 필기시험 문제은행" or line == "CONTENTS":
+            continue
+        # 2. 페이지 번호 (숫자만 있는 줄) 무시
+        if re.match(r'^\d+$', line):
+            continue
+        # 3. 파트 제목 무시 (예: "PART 01 수상구조사의 자세", "PART 01" 등)
+        if line.startswith("PART"):
+            continue
+        # ----------------------------------------
+        
         # 1. '문제' 식별
         if re.match(r'^(\d+)\.\s*(.*)', line):
             if current_q and current_q.get("answerIndex") != -1:
