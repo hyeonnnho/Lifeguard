@@ -5,7 +5,7 @@ import re
 def extract_quiz_data(pdf_path, output_json_path):
     questions_data = []
     
-    print("PDF 텍스트 추출을 시작합니다... (정밀 파싱 적용)")
+    print("PDF 텍스트 추출을 시작합니다... (보기/해설 완벽 분리 적용)")
     
     full_text = ""
     with pdfplumber.open(pdf_path) as pdf:
@@ -44,25 +44,28 @@ def extract_quiz_data(pdf_path, output_json_path):
             current_q["answerIndex"] = mapping.get(ans_char, -1)
             continue
             
-        # 3. '해설' 식별
+        # 3. '해설' 식별 (명시적 시작 단어)
         if line.startswith("해 설") or line.startswith("해설"):
-            current_q["explanation"] = line
+            current_q["explanation"] += " " + line
             continue
             
-        # 4. [수정됨] '보기' 식별 (한 줄에 여러 보기가 있는 경우 완벽 분리)
+        # 4. [핵심 수정] 정답이 이미 나왔다면, 이후의 모든 텍스트는 해설에 이어붙입니다! (보기 기호 무시)
+        if current_q["answerIndex"] != -1:
+            current_q["explanation"] += " " + line
+            continue
+            
+        # 5. '보기' 식별 (정답이 나오기 전까지만 작동)
         markers = ['①', '②', '③', '④']
         if any(marker in line for marker in markers):
-            # 만약 보기 기호보다 앞에 텍스트가 있다면, 그것은 '문제'의 일부가 줄바꿈된 것입니다.
             found_pos = [line.find(m) for m in markers if m in line]
             first_marker_pos = min(found_pos)
             
+            # 보기 기호 앞의 텍스트는 문제의 일부
             if first_marker_pos > 0:
                 before_text = line[:first_marker_pos].strip()
                 if before_text:
                     current_q["question"] += " " + before_text
                     
-            # 해당 줄에서 ①, ②, ③, ④ 단위로 쪼개서 보기 리스트에 추가
-            # 정규식 해석: 보기 기호로 시작해서, 다음 보기 기호가 나오거나 줄이 끝날 때까지 추출
             options = re.findall(r'[①②③④]\s*(.*?)(?=[①②③④]|$)', line)
             for opt in options:
                 clean_opt = opt.strip()
@@ -70,25 +73,31 @@ def extract_quiz_data(pdf_path, output_json_path):
                     current_q["options"].append(clean_opt)
             continue
             
-        # 5. [추가됨] 어디에도 속하지 않는 텍스트 처리 (두 줄로 이어진 텍스트)
-        if current_q["answerIndex"] != -1: 
-            # 정답이 나온 후라면 해설이 길어서 줄바꿈된 것
-            current_q["explanation"] += " " + line
-        elif len(current_q["options"]) > 0:
-            # 보기가 들어가는 중이었다면, 보기 내용이 길어서 줄바꿈된 것
+        # 6. 어디에도 속하지 않는 텍스트 (정답 이전)
+        if len(current_q["options"]) > 0:
+            # 보기가 있는 상태라면 마지막 보기에 이어 붙임
             current_q["options"][-1] += " " + line
         else:
-            # 보기가 시작되기도 전이라면, 문제 내용이 길어서 줄바꿈된 것
+            # 보기가 아직 없다면 문제에 이어 붙임
             current_q["question"] += " " + line
 
     # 마지막 문제 처리
     if current_q and current_q.get("answerIndex") != -1:
         questions_data.append(current_q)
         
+    # 콘솔에서 디버깅: 보기가 4개가 아닌 문항이 있는지 검사
+    abnormal_count = 0
+    for q in questions_data:
+        if len(q["options"]) != 4:
+            print(f"⚠️ 확인 필요: 문제 '{q['question'][:25]}...' 의 보기 개수가 {len(q['options'])}개입니다.")
+            abnormal_count += 1
+
     with open(output_json_path, 'w', encoding='utf-8') as f:
         json.dump(questions_data, f, ensure_ascii=False, indent=2)
         
-    print(f"✅ 정밀 데이터 정제 완료! 총 {len(questions_data)}문제가 저장되었습니다.")
+    print(f"\n✅ 정제 완료! 총 {len(questions_data)}문제 저장됨.")
+    if abnormal_count == 0:
+        print("🎉 모든 문제의 보기가 완벽하게 4개씩 분리되었습니다!")
 
 # 스크립트 실행
 extract_quiz_data("수상구조사 필기시험 문제은행.pdf", "quiz_data.json")
